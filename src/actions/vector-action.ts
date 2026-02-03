@@ -4,7 +4,6 @@ import { Pinecone } from "@pinecone-database/pinecone";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { PDFParse } from "pdf-parse";
 import { db } from "@/lib/db";
-import { families } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 
@@ -23,6 +22,13 @@ export async function vectorAction(formData: FormData) {
     });
 
     try {
+        // Fix for "Cannot find module '...pdf.worker.mjs'" in Server Actions
+        // We point it to the actual file in node_modules using an absolute path
+        const path = await import("path");
+        const { pathToFileURL } = await import("url");
+        const workerPath = path.resolve("node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+        (PDFParse as any).setWorker(pathToFileURL(workerPath).toString());
+
         // 1. Extraction du texte PDF
         const bytes = await file.arrayBuffer();
         const parser = new PDFParse({ data: Buffer.from(bytes) });
@@ -38,32 +44,37 @@ export async function vectorAction(formData: FormData) {
 
         // 3. Embeddings & Metadata Extraction with Gemini
         const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
-        const metaModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const metaModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // More stable quota
         const index = pc.index(process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026");
 
-        for (const chunk of chunks) {
-            // Extract metadata using LLM
-            const metaPrompt = `Analyse ce fragment de document d'une association caritative à Casablanca.
-            Extrais:
-            1. Le quartier (ex: Hay Hassani, Maarif, Sidi Moumen). Si non mentionné, réponds "Casablanca - Autre".
-            2. Le type de besoin (ex: Panier Alimentaire, Zakat, Médicaments).
-            3. Le niveau de priorité (Prioritaire, Standard, Urgent).
+        // Strategy: Extract GLOBAL metadata once to save quota
+        const docSummary = text.substring(0, 3000); // Use first 3k chars for context
+        const metaPrompt = `Analyse ce document d'une association caritative à Casablanca.
+        Extrais ces informations globales pour le document entier:
+        1. Le quartier (ex: Hay Hassani, Maarif, Sidi Moumen).
+        2. Le type de besoin principal (ex: Panier Alimentaire, Zakat).
+        3. Le niveau de priorité global (Prioritaire, Standard, Urgent).
 
-            Fragment: "${chunk}"
+        Texte: "${docSummary}"
 
-            Réponds UNIQUEMENT en JSON format: {"quartier": "...", "besoin": "...", "priorite": "..."}`;
+        Réponds UNIQUEMENT en JSON: {"neighborhood": "...", "need": "...", "status": "..."}`;
 
+        let globalMetadata = { neighborhood: "Casablanca", need: "Sadaqa", status: "Standard" };
+        try {
             const metaResult = await metaModel.generateContent(metaPrompt);
             const metaText = metaResult.response.text();
-            let metadata = { quartier: "Casablanca", besoin: "Sadaqa", priorite: "Standard" };
+            globalMetadata = JSON.parse(metaText.replace(/```json|```/g, ""));
+        } catch (e) {
+            console.warn("Using default metadata due to API limit or error.");
+        }
 
-            try {
-                metadata = JSON.parse(metaText.replace(/```json|```/g, ""));
-            } catch (e) {
-                console.warn("Failed to parse metadata JSON, using defaults.");
-            }
-
-            const result = await embedModel.embedContent(chunk);
+        for (const chunk of chunks) {
+            const result = await embedModel.embedContent({
+                content: { parts: [{ text: chunk }] },
+                taskType: "RETRIEVAL_DOCUMENT",
+                title: file.name,
+                outputDimensionality: 768
+            } as any);
             const embedding = result.embedding.values;
 
             // 4. Upsert vers Pinecone with Rich Metadata
@@ -72,38 +83,20 @@ export async function vectorAction(formData: FormData) {
                     id: `doc-${Date.now()}-${Math.random().toString(36).substring(7)}`,
                     values: embedding,
                     metadata: {
+                        name: file.name,
                         text: chunk as string,
                         source: file.name,
                         category: "famille",
-                        ...metadata
+                        ...globalMetadata
                     }
                 }]
             });
-
-            // 5. Insert into PostgreSQL (Structured Data)
-            // Note: In a real app, we might want to extract a specific family name or ID.
-            // For now, we'll store the record metadata.
-            try {
-                // Heuristic: If we can't find a specific name, use the source filename as identifier
-                await db.insert(families).values({
-                    id: `fam-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-                    name: `Famille - ${file.name.replace(".pdf", "")}`,
-                    neighborhood: metadata.quartier,
-                    aidType: metadata.besoin,
-                    priority: metadata.priorite,
-                    status: "En attente",
-                    notes: `Extrait de: ${file.name}`,
-                    addedBy: session?.user?.id,
-                });
-            } catch (dbErr) {
-                console.error("Database Insert Error:", dbErr);
-                // Continue indexing even if DB insert fails
-            }
         }
 
         return { success: true, message: `${chunks.length} segments indexés avec succès.` };
-    } catch (error) {
+    } catch (error: any) {
         console.error("Vector Action Error:", error);
-        return { error: "Échec de l'indexation. Vérifiez vos clés API." };
+        const errorMessage = error.message || "Erreur inconnue";
+        return { error: `Échec de l'indexation: ${errorMessage}. Vérifiez vos clés API.` };
     }
 }

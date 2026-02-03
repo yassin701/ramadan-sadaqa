@@ -39,7 +39,7 @@ export async function POST(req: Request) {
             .join("\n\n---\n\n");
 
         // 3. Streaming Generation
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
         const prompt = `Tu es Aura-Sadaqa, l'assistant expert des associations caritatives de Casablanca.
         Ta mission est d'aider les bénévoles et donateurs en te basant sur le contexte récupéré des documents internes de l'association.

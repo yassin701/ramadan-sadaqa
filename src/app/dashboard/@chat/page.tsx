@@ -6,9 +6,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSadaqa } from "@/components/context/sadaqa-context";
 import { chatSchema, ChatInput } from "@/lib/validators/form-schema";
+import { chatAction } from "@/actions/chat-action";
+import { readStreamableValue } from "@ai-sdk/rsc";
 
 export default function ChatPage() {
-    const { isThinking, setIsThinking } = useSadaqa();
+    const { isThinking, setIsThinking, selectedNeighborhood } = useSadaqa();
     const [messages, setMessages] = useState<{ id: string; role: "user" | "ai"; text: string }[]>([]);
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -29,38 +31,30 @@ export default function ChatPage() {
         setIsThinking(true);
 
         try {
-            const response = await fetch("/api/chat", {
-                method: "POST",
-                body: JSON.stringify({ message: userMsg }),
+            const { output } = await chatAction(userMsg, {
+                neighborhood: selectedNeighborhood
             });
-
-            if (!response.ok) throw new Error("Stream failed");
-
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-            let aiText = "";
 
             const aiMsgId = (Date.now() + 1).toString();
             setMessages(prev => [...prev, { id: aiMsgId, role: "ai", text: "" }]);
 
-            while (true) {
-                const { done, value } = await reader?.read() || { done: true, value: undefined };
-                if (done) break;
-
-                const chunk = decoder.decode(value);
-                aiText += chunk;
-
-                setMessages(prev => {
-                    const updated = [...prev];
-                    const aiMsgIndex = updated.findIndex(m => m.id === aiMsgId);
-                    if (aiMsgIndex !== -1) {
-                        updated[aiMsgIndex].text = aiText;
-                    }
-                    return [...updated];
-                });
+            let fullContent = "";
+            for await (const delta of readStreamableValue(output)) {
+                if (delta) {
+                    fullContent += delta;
+                    setMessages(prev => {
+                        const updated = [...prev];
+                        const idx = updated.findIndex(m => m.id === aiMsgId);
+                        if (idx !== -1) updated[idx].text = fullContent;
+                        return updated;
+                    });
+                }
             }
         } catch (error) {
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: "ai", text: "Salam, une erreur s'est produite. Veuillez vérifier votre connexion." }]);
+            setMessages(prev => [
+                ...prev,
+                { id: Date.now().toString(), role: "ai", text: "Salam, une erreur s'est produite lors de la connexion à l'IA." }
+            ]);
         } finally {
             setIsThinking(false);
         }
@@ -115,8 +109,8 @@ export default function ChatPage() {
                             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
                         >
                             <div className={`max-w-[90%] p-6 rounded-3xl text-[13px] font-semibold leading-relaxed shadow-xl border ${m.role === "user"
-                                    ? "bg-linear-to-br from-night-blue to-[#050b14] text-white border-white/10 rounded-tr-none"
-                                    : "bg-white/5 border-white/5 text-slate-200 rounded-tl-none backdrop-blur-md"
+                                ? "bg-linear-to-br from-night-blue to-[#050b14] text-white border-white/10 rounded-tr-none"
+                                : "bg-white/5 border-white/5 text-slate-200 rounded-tl-none backdrop-blur-md"
                                 }`}>
                                 {m.text}
                             </div>

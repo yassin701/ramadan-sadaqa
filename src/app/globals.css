@@ -1,15 +1,29 @@
 @import "tailwindcss";
 
 @theme {
-  --color-night-blue: #0a192f;
-  --color-souss-orange: #f59e0b;
-  --color-lantern-glow: rgba(245, 158, 11, 0.4);
+  --color-casa-night: oklch(15% 0.05 260);
+  --color-sadaqa-gold: oklch(80% 0.15 85);
+  --color-souss-orange: oklch(70% 0.25 45);
   --color-glass-card: rgba(255, 255, 255, 0.03);
   --color-glass-border: rgba(255, 255, 255, 0.1);
 
   --font-sans: "Inter", "Outfit", system-ui, sans-serif;
 
-  --animate-pulse-slow: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-crescent-pulse: crescent-pulse 3s ease-in-out infinite;
+
+  @keyframes crescent-pulse {
+
+    0%,
+    100% {
+      transform: scale(1);
+      filter: drop-shadow(0 0 10px oklch(70% 0.25 45 / 0.5));
+    }
+
+    50% {
+      transform: scale(1.1);
+      filter: drop-shadow(0 0 25px oklch(70% 0.25 45 / 0.8));
+    }
+  }
 }
 
 @layer base {

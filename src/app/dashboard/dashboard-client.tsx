@@ -21,7 +21,7 @@ export default function DashboardClient({ chat, explorer }: DashboardClientProps
 
     return (
         <SadaqaProvider>
-            <div className="flex h-screen w-full flex-col overflow-hidden bg-night-blue text-slate-200">
+            <div className="flex h-screen w-full flex-col overflow-hidden bg-casa-night text-slate-200">
                 <header className="flex h-20 items-center justify-between px-10 border-b border-white/5 bg-white/2 backdrop-blur-2xl sticky top-0 z-20">
                     <div className="flex items-center gap-4">
                         <div className="w-10 h-10 bg-souss-orange/20 rounded-xl flex items-center justify-center text-xl shadow-lg shadow-souss-orange/10">🌙</div>

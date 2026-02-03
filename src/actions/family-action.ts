@@ -1,15 +1,38 @@
 "use server";
 
-import { db } from "@/lib/db";
-import { families } from "@/lib/db/schema";
-import { desc, count, sql } from "drizzle-orm";
+import { Pinecone } from "@pinecone-database/pinecone";
+
+const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY || "" });
 
 export async function getFamiliesAction() {
     try {
-        const records = await db.select()
-            .from(families)
-            .orderBy(desc(families.createdAt))
-            .limit(10);
+        const index = pc.index(process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026");
+
+        // Fetching "all" records from Pinecone is not direct, so we use a dummy query or list
+        // For a true "explorer", we fetch the latest vectors
+        const queryResponse = await index.query({
+            vector: Array(768).fill(0),
+            topK: 100, // Increase limit
+            includeMetadata: true,
+            filter: {
+                $or: [
+                    { type: "family" },
+                    { category: "famille" }
+                ]
+            }
+        });
+
+        const records = queryResponse.matches.map(match => {
+            const meta = match.metadata as any;
+            return {
+                id: match.id,
+                name: meta.name || meta.source || "Inconnu",
+                neighborhood: meta.neighborhood || meta.quartier || "Casablanca",
+                status: meta.status || meta.priorite || "Standard",
+                ...meta
+            };
+        });
+
         return { success: true, data: records };
     } catch (error) {
         console.error("Fetch Families Error:", error);
@@ -19,15 +42,15 @@ export async function getFamiliesAction() {
 
 export async function getStatsAction() {
     try {
-        const [familyCount] = await db.select({ value: count() }).from(families);
+        const index = pc.index(process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026");
+        const stats = await index.describeIndexStats();
+        const familyCount = stats.totalRecordCount || 0;
 
-        // Mocking some stats for now as we don't have a full donation table yet
-        // But making family count real
         return {
             success: true,
             data: {
                 donations: "128.5k DH",
-                paniers: familyCount.value.toString(),
+                paniers: familyCount.toString(),
                 benevoles: "46"
             }
         };

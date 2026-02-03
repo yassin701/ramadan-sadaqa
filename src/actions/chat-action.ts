@@ -2,54 +2,93 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Pinecone } from "@pinecone-database/pinecone";
+import { auth } from "@/lib/auth";
+import { headers } from "next/headers";
+import { createStreamableValue } from "@ai-sdk/rsc";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY || "" });
 
-export async function chatAction(formData: FormData) {
-    const message = formData.get("message") as string;
-    if (!message) return { error: "Message vide" };
+/**
+ * Chat Action with RAG & Streaming
+ * Tone: Senior, Moroccan, Solidary, Ramadan-aware
+ */
+export async function chatAction(message: string, currentContext?: any) {
+    const stream = createStreamableValue("");
 
-    try {
-        const index = pc.index(process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026");
+    (async () => {
+        try {
+            const session = await auth.api.getSession({
+                headers: await headers(),
+            });
 
-        // 1. Generer l'embedding de la question
-        const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
-        const embedResult = await embedModel.embedContent(message);
-        const queryEmbedding = embedResult.embedding.values;
+            if (!session) {
+                stream.error("Inactif : Veuillez vous connecter.");
+                stream.done();
+                return;
+            }
 
-        // 2. Recherche Vectorielle dans Pinecone
-        const queryResponse = await index.query({
-            vector: queryEmbedding,
-            topK: 3,
-            includeMetadata: true,
-        });
+            const index = pc.index(process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026");
 
-        const context = queryResponse.matches
-            .map(match => (match.metadata as any)?.text)
-            .filter(Boolean)
-            .join("\n\n---\n\n");
+            // 1. Convert message -> embedding (768 dimensions for text-embedding-004)
+            const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+            const embedResult = await embedModel.embedContent({
+                content: { parts: [{ text: message }] },
+                taskType: "RETRIEVAL_QUERY",
+                outputDimensionality: 768
+            } as any);
+            const queryVector = embedResult.embedding.values;
 
-        // 3. Generation avec Gemini Flash
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            // 2. Query Pinecone for relevant documents
+            // We can also filter by neighborhood if provided in context
+            const filter: any = { category: "famille" };
+            if (currentContext?.neighborhood) {
+                filter.quartier = currentContext.neighborhood;
+            }
 
-        const prompt = `Tu es Aura-Sadaqa, l'assistant expert des associations caritatives de Casablanca.
-    Ta mission est d'aider les bénévoles et donateurs en te basant sur le contexte récupéré des documents de l'association.
-    
-    Réponds en français de manière chaleureuse, précise et respectueuse des valeurs du Ramadan.
-    Si le contexte ne contient pas l'information, réponds en fonction de tes connaissances générales sur la Zakat et la Sadaqa, mais précise que ce n'est pas spécifié dans les fichiers internes.
+            const queryResponse = await index.query({
+                vector: queryVector,
+                topK: 5,
+                includeMetadata: true,
+                filter
+            });
 
-    Contexte récupéré :
-    ${context || "Aucun document spécifique trouvé."}
+            const contextText = queryResponse.matches
+                .map(m => (m.metadata as any)?.text)
+                .filter(Boolean)
+                .join("\n\n---\n\n");
 
-    Question : ${message}`;
+            // 3. Inject context into Gemini Flash with a specific Ramadan tone
+            const model = genAI.getGenerativeModel({
+                model: "gemini-1.5-flash",
+                systemInstruction: `Tu es Aura-Sadaqa, l'assistant solidaire d'une association caritative à Casablanca.
+                Ton ton est fraternel, humble et respectueux des traditions du Ramadan au Maroc.
+                Utilise des expressions comme "Salam", "Baraka Allahu fik", "Ramadan Karim".
+                
+                RÈGLES STRICTES :
+                1. Utilise UNIQUEMENT le contexte fourni pour répondre aux questions précises sur les familles.
+                2. Si l'information n'est pas dans le contexte, aide l'utilisateur avec tes connaissances générales sur la gestion caritative et le rite Malékite au Maroc, mais précise que ce n'est pas dans les fichiers.
+                3. Ne mentionne jamais Pinecone ou l'IA, tu es un membre de l'équipe.
+                4. Réponds en Français, avec des touches subtiles de Darija (si approprié).`
+            });
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
+            const fullPrompt = `CONTEXTE DES DOCUMENTS :\n${contextText || "Aucune donnée spécifique trouvée dans le registre."}\n\nQUESTION DU BÉNÉVOLE : ${message}`;
 
-        return { text: response.text() };
-    } catch (error) {
-        console.error("Chat Action Error:", error);
-        return { error: "Erreur lors de la génération. Vérifiez vos clés API." };
-    }
+            const result = await model.generateContentStream(fullPrompt);
+
+            // 4. Stream response word by word
+            for await (const chunk of result.stream) {
+                const text = chunk.text();
+                stream.update(text);
+            }
+
+            stream.done();
+        } catch (error: any) {
+            console.error("Chat Action Error:", error);
+            stream.error("Échec de la connexion. Vérifiez vos réglages RAG.");
+            stream.done();
+        }
+    })();
+
+    return { output: stream.value };
 }
