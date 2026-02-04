@@ -207,14 +207,14 @@ export default function ExplorerPage() {
                         >
                             <div className="text-center space-y-3">
                                 <h3 className="text-3xl font-black text-white tracking-tighter">Nourrir l'Intelligence</h3>
-                                <p className="text-sm text-slate-400 font-medium">Glissez vos listes de distribution (PDF) pour indexation immédiate.</p>
+                                <p className="text-sm text-slate-400 font-medium">Glissez vos listes de distribution (PDF ou Excel) pour indexation immédiate.</p>
                             </div>
 
                             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
                                 <div className={`relative border-2 border-dashed rounded-[2.5rem] p-16 transition-all group backdrop-blur-xl bg-white/2
                                     ${errors.file ? "border-red-500/50 bg-red-500/5" : "border-white/10 hover:border-souss-orange/40"}
                                     ${selectedFile ? "border-souss-orange/40 bg-souss-orange/5" : ""}`}>
-                                    <input type="file" accept=".pdf" {...register("file")} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                                    <input type="file" accept=".pdf, .xlsx, .xls, .csv" {...register("file")} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                                     <div className="text-center space-y-6">
                                         <div className="w-20 h-20 bg-souss-orange/10 rounded-full flex items-center justify-center mx-auto group-hover:scale-110 transition-transform">
                                             {selectedFile ? (
@@ -225,10 +225,10 @@ export default function ExplorerPage() {
                                         </div>
                                         <div className="space-y-1">
                                             <p className="text-lg font-black text-white tracking-tight">
-                                                {selectedFile ? selectedFile.name : "Déposer le Registre PDF"}
+                                                {selectedFile ? selectedFile.name : "Déposer le Registre (PDF/Excel)"}
                                             </p>
                                             <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">
-                                                {selectedFile ? `${(selectedFile.size / 1024 / 1024).toFixed(2)} Mo` : "Format attendu: PDF (Max 5Mo)"}
+                                                {selectedFile ? `${(selectedFile.size / 1024 / 1024).toFixed(2)} Mo` : "Format attendu: PDF, XLSX, XLS, CSV (Max 5Mo)"}
                                             </p>
                                         </div>
                                     </div>

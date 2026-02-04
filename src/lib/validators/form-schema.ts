@@ -15,9 +15,17 @@ export const authSchema = z.object({
 
 export const uploadSchema = z.object({
     file: z.any()
-        .refine((files) => files instanceof FileList && files.length > 0, "Veuillez sélectionner un fichier PDF")
+        .refine((files) => files instanceof FileList && files.length > 0, "Veuillez sélectionner un fichier (PDF ou Excel)")
         .transform((files) => files[0] as File)
-        .refine((file) => file.type === "application/pdf", "Seuls les fichiers PDF sont acceptés")
+        .refine(
+            (file) => [
+                "application/pdf",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+                "text/csv"
+            ].includes(file.type),
+            "Seuls les fichiers PDF et Excel (.xlsx, .xls) sont acceptés"
+        )
         .refine((file) => file.size <= 5 * 1024 * 1024, "Le fichier ne doit pas dépasser 5 Mo (limite de l'association)"),
 });
 
