@@ -11,26 +11,29 @@ const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY || "" });
 
 /**
  * Chat Action with RAG & Streaming
- * Tone: Senior, Moroccan, Solidary, Ramadan-aware
  */
 export async function chatAction(message: string, currentContext?: any) {
     const stream = createStreamableValue("");
 
     (async () => {
         try {
+            console.log("Chat Action Started for message:", message);
             const session = await auth.api.getSession({
                 headers: await headers(),
             });
 
             if (!session) {
+                console.warn("Chat Action: No session found");
                 stream.error("Inactif : Veuillez vous connecter.");
                 stream.done();
                 return;
             }
 
-            const index = pc.index(process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026");
+            const indexName = process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026";
+            const index = pc.index(indexName);
 
-            // 1. Convert message -> embedding (768 dimensions for text-embedding-004)
+            // 1. Generate Query Embedding
+            console.log("Generating embedding...");
             const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
             const embedResult = await embedModel.embedContent({
                 content: { parts: [{ text: message }] },
@@ -39,11 +42,12 @@ export async function chatAction(message: string, currentContext?: any) {
             } as any);
             const queryVector = embedResult.embedding.values;
 
-            // 2. Query Pinecone for relevant documents
-            // We can also filter by neighborhood if provided in context
+            // 2. Query Pinecone
+            console.log("Querying Pinecone index:", indexName);
             const filter: any = { category: "famille" };
             if (currentContext?.neighborhood) {
-                filter.quartier = currentContext.neighborhood;
+                // Support both keys just in case
+                filter.neighborhood = currentContext.neighborhood;
             }
 
             const queryResponse = await index.query({
@@ -53,12 +57,15 @@ export async function chatAction(message: string, currentContext?: any) {
                 filter
             });
 
+            console.log(`Found ${queryResponse.matches.length} matches in Pinecone`);
+
             const contextText = queryResponse.matches
                 .map(m => (m.metadata as any)?.text)
                 .filter(Boolean)
                 .join("\n\n---\n\n");
 
-            // 3. Inject context into Gemini Flash with a specific Ramadan tone
+            // 3. Inject context into Gemini
+            console.log("Calling Gemini for completion...");
             const model = genAI.getGenerativeModel({
                 model: "gemini-1.5-flash",
                 systemInstruction: `Tu es Aura-Sadaqa, l'assistant solidaire d'une association caritative à Casablanca.
@@ -72,7 +79,7 @@ export async function chatAction(message: string, currentContext?: any) {
                 4. Réponds en Français, avec des touches subtiles de Darija (si approprié).`
             });
 
-            const fullPrompt = `CONTEXTE DES DOCUMENTS :\n${contextText || "Aucune donnée spécifique trouvée dans le registre."}\n\nQUESTION DU BÉNÉVOLE : ${message}`;
+            const fullPrompt = `CONTEXTE DES DOCUMENTS :\n${contextText || "Aucune donnée spécifique trouvée dans le registre pour ce quartier."}\n\nQUESTION DU BÉNÉVOLE : ${message}`;
 
             const result = await model.generateContentStream(fullPrompt);
 
@@ -82,13 +89,15 @@ export async function chatAction(message: string, currentContext?: any) {
                 stream.update(text);
             }
 
+            console.log("Chat Action: Stream completed successfully");
             stream.done();
         } catch (error: any) {
-            console.error("Chat Action Error:", error);
-            stream.error("Échec de la connexion. Vérifiez vos réglages RAG.");
+            console.error("Chat Action Error Details:", error);
+            stream.error(`Échec: ${error.message || "Erreur inconnue"}`);
             stream.done();
         }
     })();
 
     return { output: stream.value };
 }
+
