@@ -14,15 +14,16 @@ const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY || "" });
  */
 export async function chatAction(message: string, currentContext?: any) {
     const stream = createStreamableValue("");
-    const requestHeaders = await headers();
 
     (async () => {
         try {
+            console.log("Chat Action Started for message:", message);
             const session = await auth.api.getSession({
-                headers: requestHeaders,
+                headers: await headers(),
             });
 
             if (!session) {
+                console.warn("Chat Action: No session found");
                 stream.error("Inactif : Veuillez vous connecter.");
                 stream.done();
                 return;
@@ -32,19 +33,20 @@ export async function chatAction(message: string, currentContext?: any) {
             const index = pc.index(indexName);
 
             // 1. Generate Query Embedding
+            console.log("Generating embedding...");
             const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
-            const embedResult = await embedModel.embedContent(message);
+            const embedResult = await embedModel.embedContent({
+                content: { parts: [{ text: message }] },
+                taskType: "RETRIEVAL_QUERY",
+                outputDimensionality: 768
+            } as any);
             const queryVector = embedResult.embedding.values;
 
             // 2. Query Pinecone
-            const filter: any = {
-                $or: [
-                    { category: "famille" },
-                    { category: { $exists: false } }
-                ]
-            };
-
+            console.log("Querying Pinecone index:", indexName);
+            const filter: any = { category: "famille" };
             if (currentContext?.neighborhood) {
+                // Support both keys just in case
                 filter.neighborhood = currentContext.neighborhood;
             }
 
@@ -55,22 +57,29 @@ export async function chatAction(message: string, currentContext?: any) {
                 filter
             });
 
+            console.log(`Found ${queryResponse.matches.length} matches in Pinecone`);
+
             const contextText = queryResponse.matches
                 .map(m => (m.metadata as any)?.text)
                 .filter(Boolean)
                 .join("\n\n---\n\n");
 
             // 3. Inject context into Gemini
+            console.log("Calling Gemini for completion...");
             const model = genAI.getGenerativeModel({
-                model: "gemini-flash-latest",
-                systemInstruction: `Tu es Aura-Sadaqa, l’assistant solidaire d’une association caritative basée à Casablanca, chargé d’accompagner les citoyens dans leurs actions d’entraide.
-
-Ton ton est fraternel, humble et respectueux, en accord avec les valeurs marocaines et l’esprit du Ramadan.
-
-Tu utilises des expressions chaleureuses et appropriées comme “Salam”, “Baraka Allahu fik”, “Ramadan Karim” lorsque le contexte s’y prête.`
+                model: "gemini-1.5-flash",
+                systemInstruction: `Tu es Aura-Sadaqa, l'assistant solidaire d'une association caritative à Casablanca.
+                Ton ton est fraternel, humble et respectueux des traditions du Ramadan au Maroc.
+                Utilise des expressions comme "Salam", "Baraka Allahu fik", "Ramadan Karim".
+                
+                RÈGLES STRICTES :
+                1. Utilise UNIQUEMENT le contexte fourni pour répondre aux questions précises sur les familles.
+                2. Si l'information n'est pas dans le contexte, aide l'utilisateur avec tes connaissances générales sur la gestion caritative et le rite Malékite au Maroc, mais précise que ce n'est pas dans les fichiers.
+                3. Ne mentionne jamais Pinecone ou l'IA, tu es un membre de l'équipe.
+                4. Réponds en Français, avec des touches subtiles de Darija (si approprié).`
             });
 
-            const fullPrompt = `CONTEXTE :\n${contextText || "Aucune donnée disponible dans le registre pour ce quartier."}\n\nQUESTION : ${message}`;
+            const fullPrompt = `CONTEXTE DES DOCUMENTS :\n${contextText || "Aucune donnée spécifique trouvée dans le registre pour ce quartier."}\n\nQUESTION DU BÉNÉVOLE : ${message}`;
 
             const result = await model.generateContentStream(fullPrompt);
 
@@ -80,10 +89,11 @@ Tu utilises des expressions chaleureuses et appropriées comme “Salam”, “B
                 stream.update(text);
             }
 
+            console.log("Chat Action: Stream completed successfully");
             stream.done();
         } catch (error: any) {
-            console.error("Chat Action Error:", error);
-            stream.error(`Désolé, une erreur technique est survenue: ${error.message || "Connexion perdue"}`);
+            console.error("Chat Action Error Details:", error);
+            stream.error(`Échec: ${error.message || "Erreur inconnue"}`);
             stream.done();
         }
     })();
