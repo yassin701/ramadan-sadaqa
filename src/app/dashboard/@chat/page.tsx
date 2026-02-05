@@ -50,10 +50,18 @@ export default function ChatPage() {
                     });
                 }
             }
-        } catch (error) {
+        } catch (error: any) {
+            const errorMsg = error?.message || "Erreur inconnue";
+            const statusCode = error?.status || error?.statusCode || "";
+            const detailedError = statusCode
+                ? `Salam, une erreur s'est produite (${statusCode}): ${errorMsg}`
+                : `Salam, une erreur s'est produite: ${errorMsg}`;
+
+            console.error("Chat Error Details:", error);
+
             setMessages(prev => [
                 ...prev,
-                { id: Date.now().toString(), role: "ai", text: "Salam, une erreur s'est produite lors de la connexion à l'IA." }
+                { id: Date.now().toString(), role: "ai", text: detailedError }
             ]);
         } finally {
             setIsThinking(false);

@@ -67,7 +67,7 @@ export async function chatAction(message: string, currentContext?: any) {
             // 3. Inject context into Gemini
             console.log("Calling Gemini for completion...");
             const model = genAI.getGenerativeModel({
-                model: "gemini-1.5-flash",
+                model: "gemini-flash-latest",
                 systemInstruction: `Tu es Aura-Sadaqa, l'assistant solidaire d'une association caritative à Casablanca.
                 Ton ton est fraternel, humble et respectueux des traditions du Ramadan au Maroc.
                 Utilise des expressions comme "Salam", "Baraka Allahu fik", "Ramadan Karim".
