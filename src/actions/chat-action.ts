@@ -17,7 +17,7 @@ export async function chatAction(message: string, currentContext?: any) {
 
     (async () => {
         try {
-            console.log("Chat Action Started for message:", message);
+            console.log("Chat Action Started for message:", message, "TimeStamp:", Date.now());
             const session = await auth.api.getSession({
                 headers: await headers(),
             });
@@ -32,37 +32,41 @@ export async function chatAction(message: string, currentContext?: any) {
             const indexName = process.env.PINECONE_INDEX_NAME || "casa-ramadan-2026";
             const index = pc.index(indexName);
 
-            // 1. Generate Query Embedding
-            console.log("Generating embedding...");
-            const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
-            const embedResult = await embedModel.embedContent({
-                content: { parts: [{ text: message }] },
-                taskType: "RETRIEVAL_QUERY",
-                outputDimensionality: 768
-            } as any);
-            const queryVector = embedResult.embedding.values;
+            let contextText = "";
 
-            // 2. Query Pinecone
-            console.log("Querying Pinecone index:", indexName);
-            const filter: any = { category: "famille" };
-            if (currentContext?.neighborhood) {
-                // Support both keys just in case
-                filter.neighborhood = currentContext.neighborhood;
+            try {
+                // 1. Generate Query Embedding
+                console.log("Generating embedding...");
+                const embedModel = genAI.getGenerativeModel({ model: "embedding-001" });
+                const embedResult = await embedModel.embedContent({
+                    content: { parts: [{ text: message }] },
+                } as any);
+                const queryVector = embedResult.embedding.values;
+
+                // 2. Query Pinecone
+                console.log("Querying Pinecone index:", indexName);
+                const filter: any = { category: "famille" };
+                if (currentContext?.neighborhood) {
+                    filter.neighborhood = currentContext.neighborhood;
+                }
+
+                const queryResponse = await index.query({
+                    vector: queryVector,
+                    topK: 5,
+                    includeMetadata: true,
+                    filter
+                });
+
+                console.log(`Found ${queryResponse.matches.length} matches in Pinecone`);
+
+                contextText = queryResponse.matches
+                    .map(m => (m.metadata as any)?.text)
+                    .filter(Boolean)
+                    .join("\n\n---\n\n");
+            } catch (err: any) {
+                console.warn("RAG Retrieval Failed (Model/API Error). Proceeding without context.", err.message);
+                contextText = ""; // Fallback to empty context
             }
-
-            const queryResponse = await index.query({
-                vector: queryVector,
-                topK: 5,
-                includeMetadata: true,
-                filter
-            });
-
-            console.log(`Found ${queryResponse.matches.length} matches in Pinecone`);
-
-            const contextText = queryResponse.matches
-                .map(m => (m.metadata as any)?.text)
-                .filter(Boolean)
-                .join("\n\n---\n\n");
 
             // 3. Inject context into Gemini
             console.log("Calling Gemini for completion...");
@@ -93,7 +97,8 @@ export async function chatAction(message: string, currentContext?: any) {
             stream.done();
         } catch (error: any) {
             console.error("Chat Action Error Details:", error);
-            stream.error(`Échec: ${error.message || "Erreur inconnue"}`);
+            const errorMessage = error?.message || JSON.stringify(error) || "Erreur inconnue";
+            stream.error(`Détails de l'erreur: ${errorMessage}`);
             stream.done();
         }
     })();
